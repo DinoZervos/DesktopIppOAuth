@@ -1,161 +1,137 @@
-﻿using System;
-using DevDefined.OAuth.Consumer;
-using DevDefined.OAuth.Framework;
-using System.Threading.Tasks;
-using System.Threading;
-#if NET40
-using System.Web.Http.SelfHost;
-#else
+﻿/*
+   
+  Copyright (C) Chaverware LLC - All Rights Reserved
+  Unauthorized copying of this file, via any medium is strictly prohibited
+  Proprietary and confidential
+  Written by Dino Zervos [dzervos@chaverware.com] September 2019
+    
+*/
+using Intuit.Ipp.OAuth2PlatformClient;
 using Microsoft.Owin.Hosting;
-#endif
+using System;
+using System.Collections.Generic;
+using System.Threading.Tasks;
 
-namespace DesktopIppOAuth
-{
-    public class OAuthConnector
-    {
+namespace DesktopIppOAuth {
 
-        public delegate void IppOAuthResultHandler(string accessToken, string accessTokenSecret, string realmId, string dataSource);
-        public event IppOAuthResultHandler IppOAuthResultEvent;
-#if NET40
-        HttpSelfHostServer _webApp = null;
-#else
-        IDisposable _webApp = null;
-#endif
-        private string _defaultBaseAddress = @"http://localhost:65521/";
-        private IToken _requestToken;
+  public class OAuthConnector {
 
-        public static OAuthConnector Current { get; set; }
+    #region Fields
 
-        public string ConsumerKey { get; set; }
-        public string ConsumerSecret { get; set; }
-        public string BaseAddress { get; set; }
-        public string RedirectUrl { get; set; }
-        public string SuccessView { get; set; }
+    // URLs for the OAuth provider
+    private string _defaultBaseAddress = @"http://localhost:65521/";
+    IDisposable _webApp = null;
 
-        // URLs for the OAuth provider
-        private string _baseAuthUrl = "https://workplace.intuit.com/Connect/Begin";
-        private string _requestTokenUrl = "https://oauth.intuit.com/oauth/v1/get_request_token";
-        private string _oauthUrl = "https://oauth.intuit.com/oauth/v1";
-        private string _accessTokenUrl = "https://oauth.intuit.com/oauth/v1/get_access_token";
+    #endregion
 
-        public string RealmId { get; set; }
-        public string DataSource { get; set; }
-        public string AccessToken { get; set; }
-        public string AccessTokenSecret { get; set; }
+    #region Events
 
-        
-        public void Connect(string consumerKey, string consumerSecret)
-        {
-            Connect(consumerKey, consumerSecret, _defaultBaseAddress);
-        }
+    public event IppOAuthResultHandler IppOAuthResultEvent;
 
-        public void Connect(string consumerKey, string consumerSecret, string baseAddress)
-        {
-            Connect(consumerKey, consumerSecret, _defaultBaseAddress, null);
-        }
+    public delegate void IppOAuthResultHandler(string accessToken, string refreshToken);
 
-        public void Connect(string consumerKey, string consumerSecret, string baseAddress, string redirectUrl)
-        {
-            ConsumerKey = consumerKey;
-            ConsumerSecret = consumerSecret;
-            BaseAddress = baseAddress?? _defaultBaseAddress;
-            RedirectUrl = redirectUrl;
+    #endregion
 
-            if (Current != null)
-            {
-                Current.Clean();
-            }
-            Current = this;
+    #region Properties
 
-#if NET40
-            _webApp = new HttpSelfHostServer(Startup.Configuration(BaseAddress));
-            _webApp.OpenAsync().Wait();
-            
-#else
-            _webApp = WebApp.Start<Startup>(url: BaseAddress);
-#endif
-            IOAuthSession session = CreateSession();
-            IToken theToken = session.GetRequestToken();
+    public string AccessToken { get; set; } //
 
-            _requestToken = theToken;
+    public string BaseAddress { get; set; } //
 
-            // Redirect user to Intuit for Auth
-            string token = theToken.Token;
-            string secret = theToken.TokenSecret; 
-            System.Diagnostics.Process.Start(
-                _baseAuthUrl
-                    + "?oauth_token=" + token
-                    + "&oauth_callback=" + UriUtility.UrlEncode(BaseAddress + "api/oauth/")
-                    );
+    public string ConsumerId { get; set; } //
 
-        }
+    public string ConsumerSecret { get; set; } //
 
+    public string RefreshToken { get; set; } //
 
-        public void OAuthCallback(string verifier, string realmId, string dataSource)
-        {
+    internal static OAuthConnector CurrentInstance { get; set; } //
 
-            RealmId = realmId;
-            DataSource = dataSource;
+    private string RedirectUrl { get; set; } //
 
-            // Retrieve the request token saved earlier
-            IToken theToken = _requestToken;
+    #endregion
 
-            // Use the request token and auth verifier to get an access token
-            IOAuthSession clientSession = CreateSession();
-            try
-            {
-                IToken accessToken = clientSession.ExchangeRequestTokenForAccessToken(theToken, verifier);
-                AccessToken = accessToken.Token;
-                AccessTokenSecret = accessToken.TokenSecret;
+    #region Methods
 
-                IppOAuthResultEvent.Invoke(AccessToken, AccessTokenSecret, RealmId, DataSource);
-#if NET40
-                ThreadPool.QueueUserWorkItem(new WaitCallback(delegate (object state)
-                {
-                    Thread.Sleep(2000);
-                    Clean();
-                }));
-#else
-                Task.Run(() => {
-                    Task.Delay(2000).Wait();
-                    Clean();
-                });
-#endif                
-            }
-            catch (Exception ex)
-            {
-                Clean();
-                throw ex;
-            }
-        }
+    public void CleanUp() {
 
-        public void Clean()
-        {
-            if (_webApp != null)
-            {
-#if NET40
-                _webApp.CloseAsync().Wait();
-#endif
-                _webApp.Dispose();
-                _webApp = null;
-            }
-            Current = null;
-        }
+      if (_webApp != null) {
+        _webApp.Dispose();
+        _webApp = null;
+      }
 
-        private IOAuthSession CreateSession()
-        {
-            OAuthConsumerContext consumerContext = new OAuthConsumerContext
-            {
-                ConsumerKey = this.ConsumerKey,
-                ConsumerSecret = this.ConsumerSecret,
-                SignatureMethod = SignatureMethod.HmacSha1
-            };
-            return new OAuthSession(consumerContext,
-                    _requestTokenUrl,
-                    _oauthUrl,
-                    _accessTokenUrl);
-        }
-
+      CurrentInstance = null;
 
     }
+
+    public void Connect(string consumerId, string consumerSecret) {
+
+      Connect(consumerId, consumerSecret, _defaultBaseAddress);
+
+    }
+
+    public void Connect(string consumerId, string consumerSecret, string baseAddress) {
+
+      this.ConsumerId = consumerId;
+      this.ConsumerSecret = consumerSecret;
+      this.BaseAddress = baseAddress ?? _defaultBaseAddress;
+      this.RedirectUrl = this.BaseAddress + @"api/oauth";
+
+      if(CurrentInstance != null) {
+        CurrentInstance.CleanUp();
+      }
+
+      CurrentInstance = this;
+
+      // start the server
+      _webApp = WebApp.Start<Startup>(url: this.BaseAddress);
+
+      // prepare scopes
+      List<OidcScopes> scopes = new List<OidcScopes>();
+      scopes.Add(OidcScopes.Accounting);
+
+      // get auth url
+      OAuth2Client client = GetoAuthClient();
+      string authorizationUrl = client.GetAuthorizationURL(scopes);
+
+      // start it in the customer's browser
+      // this will then call back the get function int the controller
+      System.Diagnostics.Process.Start(authorizationUrl);
+
+    }
+
+    internal async void oAuthCallback(string code, string state, string realmId) {
+
+      // the controller calls this when it has the code so it can get the token
+
+      try {
+
+        OAuth2Client client = GetoAuthClient();
+        TokenResponse result = await client.GetBearerTokenAsync(code);
+        this.AccessToken = result.AccessToken;
+        this.RefreshToken = result.RefreshToken;
+        IppOAuthResultEvent.Invoke(this.AccessToken, this.RefreshToken);
+
+        await Task.Run(
+          () => {
+            Task.Delay(2000).Wait();
+            CleanUp();
+          });
+      }
+      catch(Exception ex) {
+        CleanUp();
+        throw ex;
+      }
+
+    }
+
+    private OAuth2Client GetoAuthClient() {
+
+      return new OAuth2Client(this.ConsumerId, this.ConsumerSecret, this.RedirectUrl, "sandbox");
+
+    }
+
+  #endregion
+
+  }
+
 }
